@@ -187,8 +187,115 @@ def version():
     }
 
 
+def validate_repository_search(incoming_params, **kwargs):
+    validate_params(incoming_params, **{
+        'filters': validate_filters,
+        'order': str,
+        'search_after': str,
+        'search_after_uid': str,
+        'search_before': str,
+        'search_before_uid': str,
+        'size': int,
+        'sort': validate,
+        **kwargs
+    })
+
+
+def validate_filters(param):
+    """
+    >>> validate_filters('{"fileName": {"is": ["foo.txt"]}}')
+
+    >>> validate_filters('{"disease": ["H syndrome"]}')
+    Traceback (most recent call last):
+        ...
+    chalice.app.BadRequestError: BadRequestError: Invalid filter parameter `disease` should contain "is", "contains", "within" or "intersects"
+    >>> validate_filters('{"disease": {"is": "H syndrome"}}')
+    Traceback (most recent call last):
+        ...
+    chalice.app.BadRequestError: BadRequestError: Invalid type for "is" in `disease`, should be wrapped in a list
+    """
+    try:
+        param = json.loads(param)
+    except Exception:
+        raise BadRequestError(msg=f'Incoming filters are not valid JSON, could not load `{param}`')
+    for key, value in param.items():
+        validate(key)
+        try:
+            filter_key = one(value.keys())
+        except Exception:
+            raise BadRequestError(
+                msg=f'Invalid filter parameter `{key}` should contain "is", "contains", "within" or "intersects"')
+        else:
+            if filter_key not in {'is', 'contains', 'within', 'intersects'}:
+                raise BadRequestError(
+                    msg=f'Invalid filter parameter `{key}` should contain "is", "contains", "within" or "intersects"')
+            filter_ = value[filter_key]
+            if type(filter_) is not list:
+                raise BadRequestError(msg=f'Invalid type for "{filter_key}" in `{key}`, should be wrapped in a list')
+
+
+def validate(value):
+    """
+    >>> validate('fileName')
+
+    >>> validate('fooBar')
+    Traceback (most recent call last):
+        ...
+    chalice.app.BadRequestError: BadRequestError: Invalid parameter `fooBar`
+    """
+    config_folder = os.path.dirname(service_config.__file__)
+    request_config_path = "{}/{}".format(config_folder, 'request_config.json')
+    request_config = EsTd.open_and_return_json(request_config_path)
+    translation = request_config['translation']
+    try:
+        translation[value]
+    except KeyError:
+        raise BadRequestError(msg=f'Invalid parameter `{value}`')
+
+
+def validate_params(query_params, allow_extra_params=False, **kwargs):
+    """
+    Validates incoming request query parameters for web-service API.
+
+    :param query_params: Incoming parameters to be validated.
+    :param allow_extra_params: When False, only parameters specified '**kwargs' are accepted, and validation fails if
+                               additional parameters are present in query. When True, extra parameters are allowed to be
+                               present without being properly validated.
+    :param kwargs: Parameters 'query_params' validates against.
+
+    >>> validate_params({'order': 'asc'}, order=str)
+
+    >>> validate_params({'size': 'foo'}, size=int)
+    Traceback (most recent call last):
+        ...
+    chalice.app.BadRequestError: BadRequestError: Invalid input type for `size`
+    >>> validate_params({'order': 'asc', 'token': 'bar'}, order=str)
+    Traceback (most recent call last):
+        ...
+    chalice.app.BadRequestError: BadRequestError: Invalid query parameter `token`
+    >>> validate_params({'order': 'asc', 'token': 'bar'}, True, order=str)
+
+    """
+    for key, value in query_params.items():
+        try:
+            validator = kwargs[key]
+        except KeyError:
+            if allow_extra_params:
+                pass
+            else:
+                raise BadRequestError(msg=f'Invalid query parameter `{key}`')
+        else:
+            try:
+                validator(value)
+            except (TypeError, ValueError):
+                raise BadRequestError(f'Invalid input type for `{key}`')
+            else:
+                continue
+
+
 def repository_search(entity_type: str, item_id: str):
     query_params = app.current_request.query_params or {}
+    validate_repository_search(query_params)
     filters = query_params.get('filters')
     try:
         pagination = _get_pagination(app.current_request, entity_type)
@@ -401,6 +508,7 @@ def get_summary():
     :return: Returns a jsonified Summary API response
     """
     query_params = app.current_request.query_params or {}
+    validate_params(query_params, filters=str)
     filters = query_params.get('filters')
     service = RepositoryService()
     try:
@@ -465,6 +573,7 @@ def get_search():
     to the endpoint
     """
     query_params = app.current_request.query_params or {}
+    validate_repository_search(query_params, q=str, type=str, field=str)
     filters = query_params.get('filters')
     _query = query_params.get('q', '')
     entity_type = query_params.get('type', 'files')
@@ -603,6 +712,7 @@ def handle_manifest_generation_request():
     the view function to handle
     """
     query_params = app.current_request.query_params or {}
+    validate_params(query_params, filters=str, format=str, token=str)
     filters = query_params.get('filters') or {}
     try:
         format_ = query_params['format']
@@ -783,6 +893,7 @@ def fetch_dss_files(uuid):
 
 def _dss_files(uuid, fetch=True):
     query_params = app.current_request.query_params
+    validate_params(query_params, True, fileName=str, wait=int, requestIndex=int)
     url = config.dss_endpoint + '/files/' + urllib.parse.quote(uuid, safe='')
     file_name = query_params.pop('fileName', None)
     wait = query_params.pop('wait', None)
@@ -864,6 +975,7 @@ def authenticate_via_fusillade():
     request = app.current_request
     authenticator = Authenticator()
     query_params = request.query_params or {}
+    validate_params(query_params, redirect_uri=str)
     if authenticator.is_client_authenticated(request.headers):
         return Response(body='', status_code=200)
     else:
@@ -1152,6 +1264,7 @@ def get_items_in_cart(cart_id):
     cart_id = None if cart_id == 'default' else cart_id
     user_id = get_user_id()
     query_params = app.current_request.query_params or {}
+    validate_params(query_params, resume_token=str)
     resume_token = query_params.get('resume_token')
     try:
         page = CartItemManager().get_paginable_cart_items(user_id, cart_id, resume_token=resume_token)
@@ -1492,6 +1605,7 @@ def handle_cart_export_request(cart_id: str = None):
     assert_jwt_ttl(config.cart_export_min_access_token_ttl)
     user_id = get_user_id()
     query_params = app.current_request.query_params or {}
+    validate_params(query_params, token=str)
     token = query_params.get('token')
     bearer_token = app.current_request.context['authorizer']['token']
     job_manager = CartExportJobManager()
@@ -1615,6 +1729,7 @@ def get_data_object(file_uuid):
     Return a DRS data object dictionary for a given DSS file UUID and version.
     """
     query_params = app.current_request.query_params or {}
+    validate_params(query_params, version=str)
     file_version = query_params.get('version')
     filters = {
         "fileId": {"is": [file_uuid]},
