@@ -7,7 +7,7 @@ import math
 import os
 import re
 import time
-from typing import Optional
+from typing import Optional, Callable, Mapping, Any
 import urllib
 from urllib.parse import urlparse
 
@@ -187,7 +187,7 @@ def version():
     }
 
 
-def validate_repository_search(incoming_params, **kwargs):
+def validate_repository_search(incoming_params, **validators):
     validate_params(incoming_params, **{
         'filters': validate_filters,
         'order': str,
@@ -196,72 +196,97 @@ def validate_repository_search(incoming_params, **kwargs):
         'search_before': str,
         'search_before_uid': str,
         'size': int,
-        'sort': validate,
-        **kwargs
+        'sort': validate_facet,
+        **validators
     })
 
 
-def validate_filters(param):
+def validate_filters(filters):
     """
     >>> validate_filters('{"fileName": {"is": ["foo.txt"]}}')
 
-    >>> validate_filters('{"disease": ["H syndrome"]}')
+    >>> validate_filters('"')
     Traceback (most recent call last):
-        ...
-    chalice.app.BadRequestError: BadRequestError: Invalid filter parameter `disease` should contain "is", "contains", "within" or "intersects"
+    ...
+    chalice.app.BadRequestError: BadRequestError: The `filters` parameter is not not valid JSON
+
+    >>> validate_filters('""')
+    Traceback (most recent call last):
+    ...
+    chalice.app.BadRequestError: BadRequestError: The `filters` parameter must be dictionary.
+
+    >>> validate_filters('{"disease": ["H syndrome"]}') # doctest: +NORMALIZE_WHITESPACE
+    Traceback (most recent call last):
+    ...
+    chalice.app.BadRequestError: BadRequestError: \
+    The `filters` parameter entry for `disease` must be a single-item dictionary.
+
     >>> validate_filters('{"disease": {"is": "H syndrome"}}')
     Traceback (most recent call last):
-        ...
+    ...
     chalice.app.BadRequestError: BadRequestError: Invalid type for "is" in `disease`, should be wrapped in a list
+
+    >>> validate_filters('{"disease": {"was": "H syndrome"}}') # doctest: +NORMALIZE_WHITESPACE
+    Traceback (most recent call last):
+    ...
+    chalice.app.BadRequestError: BadRequestError: \
+    The `filters` parameter entry for `disease` must be one of ('is', 'contains', 'within', 'intersects')"
     """
     try:
-        param = json.loads(param)
+        filters = json.loads(filters)
     except Exception:
-        raise BadRequestError(msg=f'Incoming filters are not valid JSON, could not load `{param}`')
-    for key, value in param.items():
-        validate(key)
+        raise BadRequestError(f'The `filters` parameter is not not valid JSON')
+    if type(filters) is not dict:
+        raise BadRequestError(f'The `filters` parameter must be dictionary.')
+    for facet, filter_ in filters.items():
+        validate_facet(facet)
         try:
-            filter_key = one(value.keys())
+            relation, value = one(filter_.items())
         except Exception:
-            raise BadRequestError(
-                msg=f'Invalid filter parameter `{key}` should contain "is", "contains", "within" or "intersects"')
+            raise BadRequestError(f'The `filters` parameter entry for `{facet}` must be a single-item dictionary.')
         else:
-            if filter_key not in {'is', 'contains', 'within', 'intersects'}:
-                raise BadRequestError(
-                    msg=f'Invalid filter parameter `{key}` should contain "is", "contains", "within" or "intersects"')
-            filter_ = value[filter_key]
-            if type(filter_) is not list:
-                raise BadRequestError(msg=f'Invalid type for "{filter_key}" in `{key}`, should be wrapped in a list')
+            valid_relations = ('is', 'contains', 'within', 'intersects')
+            if relation in valid_relations:
+                if not isinstance(value, list):
+                    raise BadRequestError(
+                        msg=f'Invalid type for "{relation}" in `{facet}`, should be wrapped in a list')
+            else:
+                raise BadRequestError(f'The `filters` parameter entry for `{facet}` must be one of {valid_relations}"')
 
 
-def validate(value):
+def validate_facet(value):
     """
-    >>> validate('fileName')
+    >>> validate_facet('fileName')
 
-    >>> validate('fooBar')
+    >>> validate_facet('fooBar')
     Traceback (most recent call last):
-        ...
+    ...
     chalice.app.BadRequestError: BadRequestError: Invalid parameter `fooBar`
     """
+    # FIXME: cache request_config https://github.com/DataBiosphere/azul/issues/1234
     config_folder = os.path.dirname(service_config.__file__)
     request_config_path = "{}/{}".format(config_folder, 'request_config.json')
     request_config = EsTd.open_and_return_json(request_config_path)
     translation = request_config['translation']
-    try:
-        translation[value]
-    except KeyError:
+    if value not in translation:
         raise BadRequestError(msg=f'Invalid parameter `{value}`')
 
 
-def validate_params(query_params, allow_extra_params=False, **kwargs):
+def validate_params(query_params: Mapping[str, str],
+                    allow_extra_params=False,
+                    **validators: Callable[[Any], Any]) -> None:
     """
     Validates incoming request query parameters for web-service API.
 
     :param query_params: Incoming parameters to be validated.
-    :param allow_extra_params: When False, only parameters specified '**kwargs' are accepted, and validation fails if
-                               additional parameters are present in query. When True, extra parameters are allowed to be
-                               present without being properly validated.
-    :param kwargs: Parameters 'query_params' validates against.
+
+    :param allow_extra_params: When False, only parameters specified via '**validators' are accepted, and validation
+                               fails if additional parameters are present. When True, additional parameters are allowed
+                               but their value is not validated.
+
+    :param validators: A dictionary mapping the name of a parameter to a function that will be used to validate the
+                       parameter. The callable called with a single argument, the parameter value to be validated, and
+                       is expected to raise an exception if the value is invalid. It may return a value but
 
     >>> validate_params({'order': 'asc'}, order=str)
 
@@ -269,28 +294,25 @@ def validate_params(query_params, allow_extra_params=False, **kwargs):
     Traceback (most recent call last):
         ...
     chalice.app.BadRequestError: BadRequestError: Invalid input type for `size`
+
     >>> validate_params({'order': 'asc', 'token': 'bar'}, order=str)
     Traceback (most recent call last):
         ...
     chalice.app.BadRequestError: BadRequestError: Invalid query parameter `token`
-    >>> validate_params({'order': 'asc', 'token': 'bar'}, True, order=str)
 
+    >>> validate_params({'order': 'asc', 'token': 'bar'}, allow_extra_params=True, order=str)
     """
-    for key, value in query_params.items():
+    for param_name, param_value in query_params.items():
         try:
-            validator = kwargs[key]
+            validator = validators[param_name]
         except KeyError:
-            if allow_extra_params:
-                pass
-            else:
-                raise BadRequestError(msg=f'Invalid query parameter `{key}`')
+            if not allow_extra_params:
+                raise BadRequestError(msg=f'Invalid query parameter `{param_name}`')
         else:
             try:
-                validator(value)
+                validator(param_value)
             except (TypeError, ValueError):
-                raise BadRequestError(f'Invalid input type for `{key}`')
-            else:
-                continue
+                raise BadRequestError(f'Invalid input type for `{param_name}`')
 
 
 def repository_search(entity_type: str, item_id: str):
