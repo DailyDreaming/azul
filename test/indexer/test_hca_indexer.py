@@ -512,6 +512,15 @@ class TestHCAIndexer(IndexerTestCase):
                 file_document_ids.add(file['hca_ingest']['document_id'])
         self.assertEqual(file_document_ids, file_uuids)
 
+    def test_indexing_matrix_related_files(self):
+        self._index_canned_bundle(('587d74b4-1075-4bbf-b96a-4d1ede0481b2', '2018-10-10T022343.182000Z'))
+        self.maxDiff = None
+        hits = self._get_all_hits()
+        for hit in hits:
+            entity_type, aggregate = config.parse_es_index_name(hit["_index"])
+            if entity_type == 'files':
+                # Examine
+
     def test_indexing_with_skipped_matrix_file(self):
         # FIXME: Remove once https://github.com/HumanCellAtlas/metadata-schema/issues/579 is resolved
         self._index_canned_bundle(('587d74b4-1075-4bbf-b96a-4d1ede0481b2', '2018-10-10T022343.182000Z'))
@@ -543,7 +552,7 @@ class TestHCAIndexer(IndexerTestCase):
         self.assertEqual(4, len(entities_with_matrix_files))  # a project, a specimen, a cell suspension and a bundle
         self.assertEqual(aggregate_file_names, file_names)
         matrix_file_names = {file_name for file_name in file_names if '.zarr!' in file_name}
-        self.assertEqual({'377f2f5a-4a45-4c62-8fb0-db9ef33f5cf0.zarr!.zattrs'}, matrix_file_names)
+        self.assertEqual({'377f2f5a-4a45-4c62-8fb0-db9ef33f5cf0.zarr!.Zattrs'}, matrix_file_names)
 
     def test_plate_bundle(self):
         self._index_canned_bundle(('d0e17014-9a58-4763-9e66-59894efbdaa8', '2018-10-03T144137.044509Z'))
