@@ -14,25 +14,19 @@ plan: validate
 	terraform plan
 
 apply: validate
-	$(MAKE) dereference_health_checks
+	python $(azul_home)/scripts/provision_health_checks.py --dereference
 	terraform apply
-	$(MAKE) reference_health_checks
+	python $(azul_home)/scripts/provision_health_checks.py --reference
 	$(MAKE) grafana
 
 auto_apply: validate
-	$(MAKE) dereference_health_checks
+	python $(azul_home)/scripts/provision_health_checks.py --dereference
 	terraform apply -auto-approve
-	$(MAKE) reference_health_checks
+	python $(azul_home)/scripts/provision_health_checks.py --reference
 	$(MAKE) grafana
 
 grafana:
 	python $(azul_home)/scripts/update_grafana.py
-
-reference_health_checks:
-	python $(azul_home)/scripts/provision_health_checks.py --reference
-
-dereference_health_checks:
-	python $(azul_home)/scripts/provision_health_checks.py --dereference
 
 destroy: validate
 	terraform destroy
@@ -44,4 +38,4 @@ auto_destroy: validate
 clean:
 	rm -f *.tf.json
 
-.PHONY: all config init validate plan apply auto_apply grafana reference_health_checks dereference_health_checks destroy auto_destroy clean
+.PHONY: all config init validate plan apply auto_apply grafana destroy auto_destroy clean
