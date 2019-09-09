@@ -60,8 +60,10 @@ class ProvisionHealthChecks:
     def provision_health_check(self, health_checks, dcp_health_check, reference):
         dcp_health_check_children = dcp_health_check['HealthCheckConfig']['ChildHealthChecks']
         azul_health_checks = []
-        for resource_name in (
-                config.service_name, config.indexer_name, config.data_browser_name, config.data_portal_name):
+        for resource_name in (config.service_name,
+                              config.indexer_name,
+                              config.data_browser_name,
+                              config.data_portal_name):
             try:
                 azul_health_checks.append(health_checks[resource_name]['Id'])
             except KeyError:
