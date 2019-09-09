@@ -54,20 +54,19 @@ def get_health_checks():
 
 def provision_health_check(health_checks, dcp_health_check, reference):
     dcp_health_check_children = dcp_health_check['HealthCheckConfig']['ChildHealthChecks']
-    try:
-        azul_health_checks = [health_checks[resource_name]['Id'] for resource_name in (config.service_name,
-                                                                                       config.indexer_name,
-                                                                                       config.data_browser_name,
-                                                                                       config.data_portal_name)]
-    except KeyError:
-        logger.info(f'No Azul health checks found for {config.deployment_stage} deployment!')
-    else:
-        dcp_health_check_children = [health_check for health_check in dcp_health_check_children
-                                     if health_check not in azul_health_checks]
-        if reference:
-            dcp_health_check_children.extend(azul_health_checks)
-        response = update_dcp_wide_health_check(dcp_health_check, dcp_health_check_children)
-        logger.info(json.dumps(response))
+    azul_health_checks = []
+    for resource_name in (config.service_name, config.indexer_name, config.data_browser_name, config.data_portal_name):
+        try:
+            azul_health_checks.append(health_checks[resource_name]['Id'])
+        except KeyError:
+            logger.info(f'No Azul health checks found for {resource_name}')
+
+    dcp_health_check_children = [health_check for health_check in dcp_health_check_children
+                                 if health_check not in azul_health_checks]
+    if reference:
+        dcp_health_check_children.extend(azul_health_checks)
+    response = update_dcp_wide_health_check(dcp_health_check, dcp_health_check_children)
+    logger.info(json.dumps(response))
 
 
 def update_dcp_wide_health_check(dcp_wide_health_check, updated_child_health_checks):
