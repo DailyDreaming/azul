@@ -11,32 +11,13 @@ import more_itertools
 from azul import config
 from azul.logging import configure_script_logging
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class ProvisionHealthChecks:
 
     def __init__(self):
         self.client = boto3.client('route53')
-
-    def main(self, argv):
-        parser = argparse.ArgumentParser(
-            description='Dynamically reference or dereference Azul\'s Route53 health checks '
-                        'to/from composite health checkers not managed by Azul.')
-        group = parser.add_mutually_exclusive_group()
-        group.add_argument('--reference', '-R', dest='reference', action='store_true', default=False,
-                           help='Link Azul managed Route53 health check resources to DCP wide composite health check.')
-        group.add_argument('--dereference', '-D', dest='reference', action='store_false', default=False,
-                           help='Unlink Azul managed Route53 health check resources to DCP wide composite health '
-                                'check.')
-        options = parser.parse_args(argv)
-        health_checks = self.get_health_checks
-        try:
-            dcp_wide_health_check = health_checks[f'dcp-health-check-{config.deployment_stage}']
-        except KeyError:
-            logger.info(f'DCP wide health check does not exist for {config.deployment_stage}')
-        else:
-            self.provision_health_check(health_checks, dcp_wide_health_check, options.reference)
 
     @property
     def get_health_checks(self):
@@ -67,14 +48,14 @@ class ProvisionHealthChecks:
             try:
                 azul_health_checks.append(health_checks[resource_name]['Id'])
             except KeyError:
-                logger.info(f'No Azul health checks found for {resource_name}')
+                log.info(f'No Azul health checks found for {resource_name}')
 
         dcp_health_check_children = [health_check for health_check in dcp_health_check_children
                                      if health_check not in azul_health_checks]
         if reference:
             dcp_health_check_children.extend(azul_health_checks)
         response = self.update_dcp_wide_health_check(dcp_health_check, dcp_health_check_children)
-        logger.info(json.dumps(response))
+        log.info(json.dumps(response))
 
     def update_dcp_wide_health_check(self, dcp_wide_health_check, updated_child_health_checks):
         dcp_wide_health_check['HealthCheckConfig'].pop('ChildHealthChecks')
@@ -85,7 +66,27 @@ class ProvisionHealthChecks:
                                                HealthThreshold=len(updated_child_health_checks))
 
 
-if __name__ == '__main__':
-    configure_script_logging(logger)
+def main(argv):
     provision_health_checks = ProvisionHealthChecks()
-    provision_health_checks.main(sys.argv[1:])
+    parser = argparse.ArgumentParser(
+        description='Dynamically reference or dereference Azul\'s Route53 health checks '
+                    'to/from composite health checkers not managed by Azul.')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--reference', '-R', dest='reference', action='store_true', default=False,
+                       help='Link Azul managed Route53 health check resources to DCP wide composite health check.')
+    group.add_argument('--dereference', '-D', dest='reference', action='store_false', default=False,
+                       help='Unlink Azul managed Route53 health check resources to DCP wide composite health '
+                            'check.')
+    options = parser.parse_args(argv)
+    health_checks = provision_health_checks.get_health_checks
+    try:
+        dcp_wide_health_check = health_checks[f'dcp-health-check-{config.deployment_stage}']
+    except KeyError:
+        log.info(f'DCP wide health check does not exist for {config.deployment_stage}')
+    else:
+        provision_health_checks.provision_health_check(health_checks, dcp_wide_health_check, options.reference)
+
+
+if __name__ == '__main__':
+    configure_script_logging(log)
+    main(sys.argv[1:])
